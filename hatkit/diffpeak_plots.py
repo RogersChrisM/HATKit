@@ -1570,3 +1570,11 @@ def main(argv: Optional[list[str]] = None) -> None:
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     main()
+
+
+
+# --- Signature ---
+# Author: CM Rogers (https://github.com/RogersChrisM/)
+# Date: 2026-04-23
+# SHA256: b075b49c54db8580bea5355bb087ae49c46acfd714f873823fb48bdbc7aa008a
+
