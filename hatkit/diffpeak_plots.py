@@ -1,12 +1,62 @@
 #!/usr/bin/env python3
 """
-volcano_refactored.py — HATkit module
-======================================
-Generates volcano plots, MA plots, and replicate-correlation regression from
-DESeq2 results (diffpeak or diffgene output).  Optionally highlights genomic
-regions of interest and checks for obfuscated HBG1/HBG2 annotations.
+FileName: diffpeak_plots.py
+    Previously named: diffExpress_analysis_v2.py (original), volcano_refactored.py (refactor)
 
-Requires: bedtools (must be on PATH)
+Author: Christopher M. Rogers (https://github.com/RogersChrisM/)
+
+Description:
+    Generates volcano plots, MA plots, and replicate-correlation dot plots from DESeq2
+    results (DiffPeak.py or DiffGenes.py output). Optionally highlights genomic regions
+    of interest via BED file intersection and checks for obfuscated HBG1/HBG2 annotations.
+    Outputs up- and down-regulated region TSVs, replicate correlation plots, and linear
+    regression stats for both test and background sample groups. hg19.
+
+Params:
+    -f,  --file             (required) : DESeq2 result file (.tsv for peak, .csv for --dge).
+    -r,  --regions          (optional) : one or more BED files for region highlighting.
+    --reverseFC             (optional) : swap background/test group assignment.
+    -p,  --usePvalue        (optional) : use raw p-value instead of FDR.
+    -lt, --lfcThresh        (optional) : log2 fold-change threshold (default 2.0).
+    -pt, --pThresh          (optional) : p-value/FDR threshold (default 0.01).
+    -t,  --title            (optional) : plot title prefix.
+    --labelVolcano          (optional) : auto-label top differentially expressed genes.
+    --numberLabels          (optional) : number of labels per direction (default 10).
+    --labelSpecific         (optional) : specific gene/region names to label.
+    --labelPromoterOnly     (optional) : restrict labels to promoter-overlapping peaks.
+    --promoterWindow        (optional) : promoter window in bp — 1000, 2000, or 5000 (default 2000).
+    --overrideHBG           (optional) : enable HBG1/HBG2 obfuscation check.
+    --dge                   (optional) : input is DiffGenes.py (RNA-seq) output.
+    --genome                (optional) : UCSC genome assembly (default hg19).
+    --debug                 (optional) : keep temp files and enable verbose logging.
+
+Script Requirements:
+    argparse, gzip, logging, os, re, shutil, subprocess, sys, tempfile, warnings (stdlib)
+    matplotlib, numpy, pandas, requests, adjustText, scipy, tqdm (third-party)
+    bedtools (must be on PATH)
+
+Associated Package:
+    HATKit
+
+Creation Date: 2025-04-22T17:15:00
+    Host: L241568
+    OS: Darwin 24.5.0
+    Bash: 3.2.57(1)-release
+    User: crogers
+
+Usage:
+    # Peak mode with region highlighting and specific gene labels
+    ./diffpeak_plots.py -f 14_treated_vs_untreated_homer_deseq2.user_peak.tsv \\
+        -r gata1-bcl11a_libpeaks.MACS2.bed nfya-bcl11a_libpeaks.MACS2.bed nfya-gata1_libpeaks.bed \\
+        -lt 1 -p -pt 0.05 --labelSpecific HBG1 HBG2 HBB KLF1 GATA1 BCL11A --labelPromoterOnly
+
+    # DGE mode
+    ./diffpeak_plots.py -f treated_vs_untreated.gene.final.combined.tpm.csv \\
+        -lt 1 -pt 0.05 --labelSpecific HBG1 HBG2 HBB KLF1 GATA1 BCL11A --labelPromoterOnly --dge
+
+    # Swap group assignment
+    ./diffpeak_plots.py -f treated_vs_untreated.gene.final.combined.tpm.csv \\
+        -lt 1 -pt 0.05 --dge --reverseFC
 """
 
 from __future__ import annotations
@@ -43,7 +93,25 @@ logger = logging.getLogger(__name__)
 class VolcanoConfig:
     """
     Carries every user-facing option through the analysis pipeline.
-    Eliminates the need for global variables.
+    Replaces all module-level globals from the original script.
+
+    Params:
+        - file (str)              : path to the DESeq2 result file.
+        - regions (list[str])     : optional BED files for region highlighting.
+        - reverse_fc (bool)       : swap background/test group assignment.
+        - use_pvalue (bool)       : use raw p-value instead of adjusted.
+        - lfc_thresh (float)      : log2 fold-change significance threshold.
+        - fdr_thresh (float)      : FDR/p-value significance threshold.
+        - title (str)             : optional plot title prefix.
+        - label_volcano (bool)    : label top N points on volcano plot.
+        - num_labels (int)        : number of top points to label.
+        - label_specific (list)   : specific gene/region names to label.
+        - label_promoter_only (bool): restrict labels to promoter regions.
+        - promoter_window (int)   : promoter window size in bp (1000/2000/5000).
+        - override_hbg (bool)     : skip HBG obfuscation check.
+        - dge (bool)              : input is DiffGenes.py (RNA-seq) output.
+        - genome (str)            : genome build (default hg19).
+        - debug (bool)            : enable verbose DEBUG logging.
     """
     file: str
     regions: list[str] = field(default_factory=list)
@@ -108,13 +176,15 @@ def safe_copy(src: str, dst: str) -> None:
 
 def convert_scientific_notation(input_path: str, output_path: str) -> None:
     """
-    Rewrite *input_path* to *output_path*, expanding any scientific-notation
-    numeric fields to standard decimal notation (10 d.p.).
+    Rewrites input_path to output_path, expanding any scientific-notation numeric
+    fields to standard decimal notation (10 decimal places).
 
-    Parameters
-    ----------
-    input_path  : source file path
-    output_path : destination file path
+    Params:
+        - input_path (str)  : source file path.
+        - output_path (str) : destination file path.
+
+    Results:
+        - output_path (file): rewritten file with expanded numeric notation.
     """
     pattern = re.compile(r"^[+-]?\d+(\.\d*)?[eE][+-]?\d+$")
     with open(input_path) as fin, open(output_path, "w") as fout:
@@ -151,12 +221,14 @@ def _stream_download(url: str, dest: Path) -> None:
 
 def ensure_gtf(genome: str = "hg19", cache_dir: Optional[str] = None) -> Path:
     """
-    Return the path to the refGene GTF (gzipped), downloading it if absent.
+    Returns the path to the refGene GTF (gzipped), downloading from UCSC if absent.
 
-    Parameters
-    ----------
-    genome    : UCSC genome assembly (e.g. "hg19", "hg38")
-    cache_dir : where to cache the file; defaults to ~/.hatkit/cache/
+    Params:
+        - genome (str)    : UCSC genome assembly (e.g. "hg19", "hg38").
+        - cache_dir (str) : cache directory; defaults to ~/.hatkit/cache/.
+
+    Returns:
+        - gtf (Path): path to the cached gzipped GTF file.
     """
     cache = Path(cache_dir or Path.home() / ".hatkit" / "cache")
     cache.mkdir(parents=True, exist_ok=True)
@@ -170,15 +242,13 @@ def ensure_gtf(genome: str = "hg19", cache_dir: Optional[str] = None) -> Path:
 
 def build_transcript_map(gtf_path: Path) -> dict[str, tuple[str, str]]:
     """
-    Parse a refGene GTF and return a transcript-ID → (gene_name, strand) map.
+    Parses a refGene GTF and returns a transcript-ID to (gene_name, strand) map.
 
-    Parameters
-    ----------
-    gtf_path : path to gzipped GTF file
+    Params:
+        - gtf_path (Path): path to gzipped GTF file.
 
-    Returns
-    -------
-    dict mapping transcript_id → (gene_name, strand)
+    Returns:
+        - tx_map (dict): maps transcript_id (str) → (gene_name, strand) tuple.
     """
     tx_map: dict[str, tuple[str, str]] = {}
     with gzip.open(gtf_path, "rt") as fh:
@@ -206,16 +276,15 @@ def fetch_gene_info(
     tx_map: dict[str, tuple[str, str]],
 ) -> tuple[str, str]:
     """
-    Extract (gene_name, strand) for a FASTA header like '>NM_006625_up_1000_chr…'.
+    Extracts (gene_name, strand) from a UCSC upstream FASTA header line
+    e.g. '>NM_006625_up_1000_chr11:...'
 
-    Parameters
-    ----------
-    header_row : FASTA header string
-    tx_map     : transcript map from :func:`build_transcript_map`
+    Params:
+        - header_row (str) : FASTA header string.
+        - tx_map (dict)    : transcript map from build_transcript_map().
 
-    Returns
-    -------
-    (gene_name, strand) or ("Unknown_gene", ".")
+    Returns:
+        - (gene_name, strand) (tuple): gene name and strand, or ("Unknown_gene", ".") if not found.
     """
     m = re.match(r"^>([A-Z]{2}_[0-9]+)", header_row)
     if not m:
@@ -229,18 +298,20 @@ def ensure_promoter_bed(
     cache_dir: Optional[str] = None,
 ) -> Path:
     """
-    Return the path to a promoter BED file, building it from UCSC upstream
-    FASTA data if it does not already exist.
+    Returns the path to a promoter BED file for the given genome and window,
+    building it from UCSC upstream FASTA data if it does not already exist.
+    Built files are cached at ~/.hatkit/cache/ and reused on subsequent runs.
 
-    Parameters
-    ----------
-    genome    : assembly (e.g. "hg19")
-    window    : upstream window in bp — must be 1000, 2000, or 5000
-    cache_dir : cache directory (default ~/.hatkit/cache/)
+    Params:
+        - genome (str)    : genome assembly (e.g. "hg19").
+        - window (int)    : upstream window in bp — must be 1000, 2000, or 5000.
+        - cache_dir (str) : cache directory; defaults to ~/.hatkit/cache/.
 
-    Returns
-    -------
-    Path to upstream{window}.bed
+    Returns:
+        - bed_path (Path): path to the upstream{window}.bed file.
+
+    Results:
+        - {genome}_upstream{window}.bed (file): #CACHE. promoter BED built from UCSC FASTA.
     """
     cache = Path(cache_dir or Path.home() / ".hatkit" / "cache")
     cache.mkdir(parents=True, exist_ok=True)
@@ -282,14 +353,18 @@ def intersects_promoter(
     cache_dir: Optional[str] = None,
 ) -> bool:
     """
-    Return True if *gene_row* overlaps the promoter BED for *genome*/*window*.
+    Returns True if gene_row overlaps any entry in the promoter BED for the
+    given genome and window. Used by _add_specific_labels() to filter labels
+    to promoter-overlapping peaks only.
 
-    Parameters
-    ----------
-    gene_row  : row from the DESeq2 DataFrame (needs 'chrom','start','end')
-    genome    : assembly
-    window    : promoter window in bp
-    cache_dir : cache directory
+    Params:
+        - gene_row (Series) : row from the DESeq2 DataFrame (requires chrom/start/end).
+        - genome (str)      : genome assembly.
+        - window (int)      : promoter window in bp.
+        - cache_dir (str)   : cache directory.
+
+    Returns:
+        - (bool): True if the row overlaps a promoter region, False otherwise.
     """
     bed_path = ensure_promoter_bed(genome, window, cache_dir)
     chrom = gene_row["chrom"]
@@ -317,19 +392,19 @@ def check_hbg_label(
     input_df: pd.DataFrame,
 ) -> tuple[Optional[pd.DataFrame], bool, bool]:
     """
-    Check whether HBG1/HBG2 promoter regions are present but obfuscated in
-    *input_df* (e.g. merged into an adjacent peak during HOMER annotation).
+    Checks whether HBG1/HBG2 promoter regions are present but obfuscated in the
+    DESeq2 output (e.g. merged into an adjacent peak during HOMER annotation).
+    Runs bedtools intersect entirely in memory via temporary files; no shell
+    scripts are written to disk. Intended for use with HemTools diffpeak.py output.
 
-    Runs ``bedtools intersect`` entirely in memory via named temporary files;
-    no shell scripts are written to disk.
+    Params:
+        - input_df (DataFrame): formatted DESeq2 DataFrame with chrom/start/end columns.
 
-    Parameters
-    ----------
-    input_df : formatted DESeq2 DataFrame (must have chrom/start/end columns)
-
-    Returns
-    -------
-    (intersect_df_or_None, hbg1_found, hbg2_found)
+    Returns:
+        - intersect_df (DataFrame or None): rows intersecting HBG promoters, indexed by
+          HBG label. None if bedtools returns no results.
+        - hbg1_found (bool): True if HBG1 promoter intersection was found.
+        - hbg2_found (bool): True if HBG2 promoter intersection was found.
     """
     _check_tool("bedtools")
 
@@ -430,23 +505,15 @@ def _log10_transform_column(series: pd.Series) -> pd.Series:
 
 def _extract_sample_label(col_name: str) -> str:
     """
-    Extract a human-readable sample label from a HOMER tag-density column name.
+    Extracts a human-readable sample label from a HOMER tag-density column name.
+    Strips path noise after the first '/' and joins the first two '_'-delimited
+    tokens. e.g. '14_treated_2_tag/ Tag Count...' → '14_treated'.
 
-    HOMER column names follow the pattern:
-        <condition>_<replicate>_tag/<path>  or  <condition>_<replicate>_tag/...
+    Params:
+        - col_name (str): raw column name from the TSV header.
 
-    We strip anything from the first '/' onward (path noise), then join the
-    first two underscore-delimited fields so that e.g.
-        '14_treated_2_tag/...'  →  '14_treated'
-        'untreated_rep1_tag'    →  'untreated_rep1'
-
-    Parameters
-    ----------
-    col_name : raw column name from the TSV header
-
-    Returns
-    -------
-    Label string composed of the first two '_'-delimited tokens.
+    Returns:
+        - label (str): first two '_'-delimited tokens joined, e.g. '14_treated'.
     """
     clean = col_name.split("/")[0]       # drop path suffix
     parts = clean.split("_")
@@ -458,16 +525,13 @@ def _validate_replicate_labels(
     label_a: str, label_b: str, group: str
 ) -> None:
     """
-    Warn if the two replicate columns for a sample group do not share the
-    same derived label, which would indicate an unexpected column ordering
-    or mixed samples.
+    Warns if the two replicate columns for a sample group do not share the same
+    derived label, indicating unexpected column ordering or mixed samples.
 
-    Parameters
-    ----------
-    label_a : label derived from the first replicate column
-    label_b : label derived from the second replicate column
-    group   : human-readable group name ('treat' or 'background') for the
-              warning message
+    Params:
+        - label_a (str): label derived from the first replicate column.
+        - label_b (str): label derived from the second replicate column.
+        - group (str)  : group name ('treat' or 'background') for the warning message.
     """
     if label_a != label_b:
         logger.warning(
@@ -479,34 +543,23 @@ def _validate_replicate_labels(
 
 def parse_deseq2(path: str, dge: bool = False) -> tuple[pd.DataFrame, dict]:
     """
-    Read a DESeq2 result file and return a standardised DataFrame plus a
-    metadata dict describing the sample columns found.
+    Reads a DESeq2 result file and returns a standardised DataFrame plus a metadata
+    dict describing the sample columns. For peak files, tail-relative column positions
+    are used (cols[-7:-4]) to be robust against extra HOMER annotation columns.
+    Sample labels are derived via _extract_sample_label() and cross-validated via
+    _validate_replicate_labels().
 
-    For peak files the last seven data columns before logFC/pVal/adj_pVal are:
-        [-7] background rep1 tag density
-        [-6] background rep2 tag density
-        [-5] treat rep1 tag density
-        [-4] treat rep2 tag density
-        [-3] logFC
-        [-2] pVal
-        [-1] adj_pVal
+    Params:
+        - path (str) : path to the DESeq2 result file (.tsv for peak, .csv for DGE).
+        - dge (bool) : if True, parse as DiffGenes.py (RNA-seq) output.
 
-    Sample labels are derived by splitting each column name on '_' and joining
-    the first two tokens (e.g. '14_treated_2_tag/...' → '14_treated').
-
-    Parameters
-    ----------
-    path : path to the DESeq2 result TSV (or CSV for DGE)
-    dge  : True for differential gene expression output
-
-    Returns
-    -------
-    (df, meta)
-    meta keys:
-        't1_label'  – derived label for the first column group (cols 19–20)
-        't2_label'  – derived label for the second column group (cols 21–22)
-        't1_cols'   – raw column names for group 1
-        't2_cols'   – raw column names for group 2
+    Returns:
+        - df (DataFrame) : standardised DataFrame with internal column names.
+        - meta (dict)    : sample group metadata with keys:
+            - t1_label (str)      : derived label for background group.
+            - t2_label (str)      : derived label for test/treat group.
+            - t1_cols (list[str]) : raw column names for background replicates.
+            - t2_cols (list[str]) : raw column names for test replicates.
     """
     if dge:
         raw = pd.read_csv(path, sep=",")
@@ -579,26 +632,26 @@ def resolve_background_treat(
     df: pd.DataFrame, meta: dict, reverse_fc: bool = False
 ) -> tuple[str, str, list[str], list[str]]:
     """
-    Determine which sample group is 'background' and which is 'treat' based
-    on the sign of the first-row LFC and the relative average tag densities,
-    then return clean human-readable labels derived directly from the column
-    names (not single-token prefixes).
+    Determines which sample group is 'background' and which is 'test' based on
+    the sign of the first-row LFC and relative average tag densities. Returns
+    human-readable labels derived from the original input column names.
 
-    The logic mirrors the original script:
-        - positive LFC + avg1 > avg2  →  t2 is treat  (higher = treat)
-        - positive LFC + avg1 ≤ avg2  →  t1 is treat
-        - negative LFC + avg1 > avg2  →  t1 is treat  (higher = background)
-        - negative LFC + avg1 ≤ avg2  →  t2 is treat
+    LFC assignment logic:
+        - positive LFC + avg1 > avg2  →  t2 is test
+        - positive LFC + avg1 ≤ avg2  →  t1 is test
+        - negative LFC + avg1 > avg2  →  t1 is test
+        - negative LFC + avg1 ≤ avg2  →  t2 is test
 
-    Parameters
-    ----------
-    df         : DataFrame from :func:`parse_deseq2`
-    meta       : metadata dict from :func:`parse_deseq2`
-    reverse_fc : if True, swap background and treat assignment
+    Params:
+        - df (DataFrame) : standardised DataFrame from parse_deseq2().
+        - meta (dict)    : metadata dict from parse_deseq2().
+        - reverse_fc (bool): if True, swap background and test assignment.
 
-    Returns
-    -------
-    (back_label, treat_label, back_cols, treat_cols)
+    Returns:
+        - back_label (str)      : human-readable label for the background group.
+        - treat_label (str)     : human-readable label for the test group.
+        - back_cols (list[str]) : path-stripped column names for background replicates.
+        - treat_cols (list[str]): path-stripped column names for test replicates.
     """
     lfc_positive = pd.to_numeric(df["logFC"], errors="coerce").iloc[0] > 0
     avg1 = pd.to_numeric(df["background_avgTD"], errors="coerce").iloc[0]
@@ -648,17 +701,17 @@ def bed_intersect(
     query_cols: Optional[list[str]] = None,
 ) -> pd.DataFrame:
     """
-    Run ``bedtools intersect -wo`` between *query_df* and a BED region file.
+    Runs bedtools intersect -wo between query_df and a BED region file and
+    returns the intersection as a DataFrame.
 
-    Parameters
-    ----------
-    query_df    : DataFrame with at least chrom/start/end columns
-    region_path : path to a BED file of regions of interest
-    query_cols  : column names for *query_df*; defaults to df.columns
+    Params:
+        - query_df (DataFrame)  : DataFrame with at least chrom/start/end columns.
+        - region_path (str)     : path to a BED file of regions of interest.
+        - query_cols (list)     : column names for query_df; defaults to df.columns.
 
-    Returns
-    -------
-    Intersect DataFrame with overlap column appended, or empty DataFrame.
+    Returns:
+        - hdf (DataFrame): intersection DataFrame with overlap column appended,
+          or empty DataFrame if no intersection.
     """
     _check_tool("bedtools")
     query_cols = list(query_df.columns) if query_cols is None else query_cols
@@ -701,17 +754,16 @@ def collect_region_highlights(
     region_files: list[str],
 ) -> list[pd.DataFrame]:
     """
-    Intersect *df* with each BED file in *region_files* and return a list of
-    intersection DataFrames (one per region file).
+    Intersects df with each BED file in region_files and returns a list of
+    intersection DataFrames, one per region file.
 
-    Parameters
-    ----------
-    df           : standardised DESeq2 DataFrame
-    region_files : list of BED file paths
+    Params:
+        - df (DataFrame)          : standardised DESeq2 DataFrame.
+        - region_files (list[str]): list of BED file paths.
 
-    Returns
-    -------
-    list of DataFrames (may be empty DataFrames if no intersection)
+    Returns:
+        - highlights (list[DataFrame]): one DataFrame per region file;
+          may contain empty DataFrames if no intersection was found.
     """
     highlights = []
     for rfile in region_files:
@@ -731,15 +783,14 @@ def _add_top_labels(
     n: int,
 ) -> None:
     """
-    Add auto-adjusted text labels for the top-*n* up- and down-regulated
-    entries in *df*.
+    Adds auto-adjusted text labels for the top N most significant up- and
+    down-regulated entries. Uses adjustText to minimise overlap.
 
-    Parameters
-    ----------
-    ax    : matplotlib Axes
-    df    : DataFrame indexed by geneName with logFC / y_col columns
-    y_col : column to use for the y-axis
-    n     : how many labels per direction
+    Params:
+        - ax (Axes)      : matplotlib Axes to annotate.
+        - df (DataFrame) : DataFrame indexed by geneName with logFC and y_col columns.
+        - y_col (str)    : column to use for y-axis values.
+        - n (int)        : number of labels per direction (up and down).
     """
     for direction in ("up", "down"):
         subset = df[df["logFC"] > 0] if direction == "up" else df[df["logFC"] < 0]
@@ -768,18 +819,19 @@ def _add_specific_labels(
     hbg2_found: bool = False,
 ) -> None:
     """
-    Plot and label specific genes by name, handling HBG override logic and
-    optional promoter-region filtering.
+    Plots and labels specific genes by name on the volcano axes. Handles three
+    labelling paths: HBG obfuscation override, promoter-only filtering, and
+    standard direct labelling.
 
-    Parameters
-    ----------
-    ax           : matplotlib Axes
-    df           : DataFrame indexed by geneName
-    genes        : list of gene names to highlight
-    y_col        : column for y-axis values
-    cfg          : VolcanoConfig
-    hbg_override : HBG intersection DataFrame (from check_hbg_label)
-    hbg1/2_found : whether HBG1/2 were found in the override check
+    Params:
+        - ax (Axes)               : matplotlib Axes to annotate.
+        - df (DataFrame)          : DataFrame indexed by geneName.
+        - genes (list[str])       : gene/region names to highlight.
+        - y_col (str)             : column for y-axis values.
+        - cfg (VolcanoConfig)     : analysis configuration.
+        - hbg_override (DataFrame): HBG intersection DataFrame from check_hbg_label(); or None.
+        - hbg1_found (bool)       : whether HBG1 was found in the override check.
+        - hbg2_found (bool)       : whether HBG2 was found in the override check.
     """
     texts: list = []
 
@@ -845,18 +897,17 @@ def classify_regulation(
     df: pd.DataFrame, y_col: str, lfc_thresh: float, fdr_thresh: float
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split *df* into up- and down-regulated subsets.
+    Splits df into up- and down-regulated subsets based on LFC and significance thresholds.
 
-    Parameters
-    ----------
-    df         : DataFrame with logFC and y_col columns
-    y_col      : 'pVal' or 'adj_pVal'
-    lfc_thresh : log-fold-change threshold
-    fdr_thresh : significance threshold
+    Params:
+        - df (DataFrame)    : DataFrame with logFC and y_col columns.
+        - y_col (str)       : significance column name ('pVal' or 'adj_pVal').
+        - lfc_thresh (float): log2 fold-change threshold.
+        - fdr_thresh (float): significance cutoff.
 
-    Returns
-    -------
-    (up_df, down_df)
+    Returns:
+        - up_df (DataFrame)  : rows with logFC >= lfc_thresh and y_col <= fdr_thresh.
+        - down_df (DataFrame): rows with logFC <= -lfc_thresh and y_col <= fdr_thresh.
     """
     up = df[(df["logFC"] >= lfc_thresh) & (df[y_col] <= fdr_thresh)]
     down = df[(df["logFC"] <= -lfc_thresh) & (df[y_col] <= fdr_thresh)]
@@ -887,18 +938,24 @@ def plot_volcano(
     output_dir: str = ".",
 ) -> tuple[float, float, float, float]:
     """
-    Produce the main volcano plot (base + full with highlights/labels).
+    Produces the main volcano plot in two versions: a base plot (no highlights or
+    labels) and a full plot with optional region highlights and gene labels. Also
+    writes up- and down-regulated TSVs.
 
-    Parameters
-    ----------
-    df         : standardised DESeq2 DataFrame
-    cfg        : VolcanoConfig
-    highlights : list of region-highlight DataFrames
-    output_dir : where to save output files
+    Params:
+        - df (DataFrame)          : standardised DESeq2 DataFrame.
+        - cfg (VolcanoConfig)     : analysis configuration.
+        - highlights (list)       : list of region-highlight DataFrames from collect_region_highlights().
+        - output_dir (str)        : directory to save output files.
 
-    Returns
-    -------
-    (xl, xr, yl, yu) — axis limits, passed to plot_highlight()
+    Returns:
+        - (xl, xr, yl, yu) (tuple): axis limits, passed to plot_highlight().
+
+    Results:
+        - base_volcanoPlot.pdf/.png (file): volcano plot without highlights or labels.
+        - full_volcanoPlot.pdf/.png (file): volcano plot with highlights and labels.
+        - up_regulated.tsv (file)          : significant up-regulated entries.
+        - down_regulated.tsv (file)        : significant down-regulated entries.
     """
     y_col = cfg.y_col
     out = Path(output_dir)
@@ -973,18 +1030,24 @@ def plot_highlight(
     output_dir: str = ".",
 ) -> None:
     """
-    Produce a standalone volcano plot for a single highlight region set,
-    using the same axis limits as the full plot.
+    Produces a standalone volcano plot for a single highlight region set,
+    using the same axis limits as the full volcano plot for visual consistency.
+    Also writes up/down-regulated TSV and BED outputs for the highlighted region.
 
-    Parameters
-    ----------
-    highlight_df : subset DataFrame from bed_intersect
-    name         : region file stem (used in output filenames)
-    color        : scatter colour for highlighted points
-    xl/xr/yl/yu  : axis limits from plot_volcano()
-    cfg          : VolcanoConfig
-    full_df      : full DESeq2 DataFrame (needed for specific-label lookup)
-    output_dir   : where to save output files
+    Params:
+        - highlight_df (DataFrame): subset DataFrame from bed_intersect().
+        - name (str)              : region file stem used in output filenames.
+        - color (str)             : scatter colour for highlighted points.
+        - xl/xr/yl/yu (float)    : axis limits from plot_volcano().
+        - cfg (VolcanoConfig)     : analysis configuration.
+        - full_df (DataFrame)     : full DESeq2 DataFrame for specific-label lookup.
+        - output_dir (str)        : directory to save output files.
+
+    Results:
+        - {name}_volcanoPlot.pdf/.png      (file): region-specific volcano plot.
+        - up_highlighted_{name}.tsv/.bed   (file): up-regulated highlighted regions.
+        - down_highlighted_{name}.tsv/.bed (file): down-regulated highlighted regions.
+        - {name}_raw_intersection.tsv      (file): raw bedtools intersection data.
     """
     y_col = cfg.y_col
     out = Path(output_dir)
@@ -1044,19 +1107,23 @@ def _render_ma(
     out_path_stem: Path,
 ) -> None:
     """
-    Draw and save a single MA plot from a pre-computed DataFrame that already
-    has 'A' (mean average) and 'M' (fold change) columns.
+    Draws and saves a single MA plot. Expects a DataFrame with pre-computed
+    'A' (mean average) and 'M' (log2 fold change) columns. Called twice by
+    plot_ma() — once for the full dataset and once for the IQR-filtered subset.
 
-    Parameters
-    ----------
-    df             : DataFrame with 'A', 'M', and padj_col columns
-    padj_col       : column name for adjusted p-value
-    alpha          : significance cutoff
-    title          : plot title
-    figsize        : figure size tuple
-    point_size     : scatter dot size
-    symmetric_ylim : force symmetric y-axis around 0
-    out_path_stem  : Path without extension; .pdf and .png are appended
+    Params:
+        - df (DataFrame)      : DataFrame with 'A', 'M', and padj_col columns.
+        - padj_col (str)      : column name for adjusted p-value.
+        - alpha (float)       : significance cutoff for colouring points.
+        - title (str)         : plot title.
+        - figsize (tuple)     : figure size.
+        - point_size (int)    : scatter dot size.
+        - symmetric_ylim (bool): force symmetric y-axis around 0.
+        - out_path_stem (Path): output path without extension; .pdf and .png are appended.
+
+    Results:
+        - <out_path_stem>.pdf (file): MA plot in PDF format.
+        - <out_path_stem>.png (file): MA plot in PNG format.
     """
     plot_df = df.copy()
     plot_df["category"] = "ns"
@@ -1097,24 +1164,26 @@ def plot_ma(
     output_dir: str = ".",
 ) -> None:
     """
-    Generate and save two MA plots: a full plot and an IQR-filtered plot that
-    excludes extreme A-axis outliers so the bulk of the data is visible.
+    Generates and saves two MA plots: a full plot and an IQR-filtered version
+    that excludes extreme A-axis outliers so the bulk of the data is readable.
 
-    Parameters
-    ----------
-    df             : DESeq2 DataFrame
-    background_col : column for mean background tag density
-    treat_col      : column for mean treat tag density
-    logfc_col      : column for log2 fold change
-    padj_col       : column for adjusted p-value
-    alpha          : significance cutoff
-    figsize        : figure size tuple
-    point_size     : scatter dot size
-    title          : plot title
-    symmetric_ylim : force symmetric y-axis around 0
-    iqr_fence      : IQR multiplier for outlier exclusion on the A axis
-                     (default 3.0 — points beyond Q3 + 3*IQR are removed)
-    output_dir     : where to save output files
+    Params:
+        - df (DataFrame)       : standardised DESeq2 DataFrame.
+        - background_col (str) : column name for mean background tag density.
+        - treat_col (str)      : column name for mean test/treat tag density.
+        - logfc_col (str)      : column name for log2 fold change.
+        - padj_col (str)       : column name for adjusted p-value.
+        - alpha (float)        : significance threshold for point colouring.
+        - figsize (tuple)      : figure size.
+        - point_size (int)     : scatter dot size.
+        - title (str)          : plot title.
+        - symmetric_ylim (bool): force symmetric y-axis around 0.
+        - iqr_fence (float)    : IQR multiplier for A-axis outlier cutoff (default 3.0).
+        - output_dir (str)     : directory to save output files.
+
+    Results:
+        - MA_plot.pdf/.png          (file): full MA plot.
+        - MA_plot_filtered.pdf/.png (file): IQR-filtered MA plot.
     """
     out = Path(output_dir)
     ma_df = df.copy()
@@ -1155,21 +1224,25 @@ def replicate_regression(
     output_dir: str = ".",
 ) -> None:
     """
-    Linear + Spearman regression on the two replicates of one sample group
-    (either test or background) and save a dot-dot plot, outlier file, and
-    regression stats — all prefixed with the group name so outputs from both
-    groups can coexist.
+    Runs linear and Spearman regression on the two replicates of one sample group
+    and saves a dot-dot correlation plot, outlier file, and regression stats.
+    All outputs are prefixed with the group label so test and background results
+    coexist in the same directory. If extreme outliers are detected (max/fence > 2.0
+    AND fewer than 1% of points beyond 10x the IQR fence), a second filtered plot
+    is also produced.
 
-    Parameters
-    ----------
-    df          : standardised DESeq2 DataFrame (columns already renamed to
-                  original input labels)
-    group_label : human-readable name for the group (e.g. '14_treated'),
-                  used in output filenames and plot titles
-    rep_cols    : (rep1_col, rep2_col) — the actual DataFrame column names for
-                  the two replicates of this group, after renaming
-    cfg         : VolcanoConfig
-    output_dir  : where to save output files
+    Params:
+        - df (DataFrame)        : DESeq2 DataFrame with columns renamed to original input labels.
+        - group_label (str)     : human-readable group name used in filenames and plot titles.
+        - rep_cols (tuple[str]) : (rep1_col, rep2_col) — renamed DataFrame column names.
+        - cfg (VolcanoConfig)   : analysis configuration.
+        - output_dir (str)      : directory to save output files.
+
+    Results:
+        - <group>_replicate_correlation_plot.pdf/.png          (file): full correlation plot.
+        - <group>_replicate_correlation_plot_filtered.pdf/.png (file): IQR-filtered plot, if triggered.
+        - <group>_replicate_outliers.txt                       (file): outlier rows (>3 SD from identity).
+        - <group>_linregress_stats.txt                         (file): Pearson and Spearman stats.
     """
     out = Path(output_dir)
 
@@ -1237,6 +1310,21 @@ def replicate_regression(
         title: str,
         out_stem: Path,
     ) -> None:
+        """
+        Draws and saves a single replicate correlation scatter plot with a linear
+        regression line and R²/Spearman annotations. Called for both the full and
+        IQR-filtered versions.
+
+        Params:
+            - xv_plot (Series) : x-axis replicate values.
+            - yv_plot (Series) : y-axis replicate values.
+            - title (str)      : plot title.
+            - out_stem (Path)  : output path without extension; .pdf and .png appended.
+
+        Results:
+            - <out_stem>.pdf (file): correlation plot in PDF format.
+            - <out_stem>.png (file): correlation plot in PNG format.
+        """
         sl, ic, rv, pv, se = linregress(xv_plot, yv_plot)
         sc, _ = spearmanr(xv_plot, yv_plot)
         fig, ax = plt.subplots()
@@ -1320,8 +1408,7 @@ def cleanup(
     """
     Move all outputs into *output_dir*. Optionally delete temporary files.
 
-    Parameters
-    ----------
+    Params:
     output_dir  : destination directory name
     has_regions : True if region-highlight files were produced
     keep_temp   : if True, leave temp* files in place (debug mode)
