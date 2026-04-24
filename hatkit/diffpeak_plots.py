@@ -85,9 +85,8 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration dataclass — replaces all module-level globals
-# ---------------------------------------------------------------------------
+
+# Configuration dataclass
 
 @dataclass
 class VolcanoConfig:
@@ -155,9 +154,9 @@ class VolcanoConfig:
     HIGHLIGHT_COLORS = ["orange", "green", "brown"]
 
 
-# ---------------------------------------------------------------------------
+
 # I/O helpers
-# ---------------------------------------------------------------------------
+
 
 def read_tsv(path: str, **kwargs) -> pd.DataFrame:
     """Read a tab-separated file, returning a DataFrame."""
@@ -199,9 +198,9 @@ def convert_scientific_notation(input_path: str, output_path: str) -> None:
             fout.write("\t".join(fields) + "\n")
 
 
-# ---------------------------------------------------------------------------
+
 # Genome / annotation helpers
-# ---------------------------------------------------------------------------
+
 
 UCSC_BASE = "https://hgdownload.soe.ucsc.edu/goldenPath"
 
@@ -378,9 +377,9 @@ def intersects_promoter(
     return False
 
 
-# ---------------------------------------------------------------------------
-# HBG override (bedtools-based, no temp shell scripts)
-# ---------------------------------------------------------------------------
+
+# HBG override (bedtools-based)
+
 
 HBG_PROMOTERS = [
     ("chr11", 5241401, 5243401, "HBG1"),
@@ -458,9 +457,9 @@ def check_hbg_label(
         return df, "HBG1" in df.index, "HBG2" in df.index
 
 
-# ---------------------------------------------------------------------------
+
 # DESeq2 input parsing
-# ---------------------------------------------------------------------------
+
 
 # Standard column sets
 _PEAK_COLS = [
@@ -683,9 +682,9 @@ def resolve_background_treat(
     return back, treat, bcols, tcols
 
 
-# ---------------------------------------------------------------------------
+
 # Bedtools intersection
-# ---------------------------------------------------------------------------
+
 
 def _check_tool(name: str) -> None:
     """Raise RuntimeError if *name* is not on PATH."""
@@ -772,9 +771,9 @@ def collect_region_highlights(
     return highlights
 
 
-# ---------------------------------------------------------------------------
+
 # Labelling helpers (shared between plotVolcano and plotHighlight)
-# ---------------------------------------------------------------------------
+
 
 def _add_top_labels(
     ax: plt.Axes,
@@ -889,9 +888,9 @@ def _add_specific_labels(
         adjust_text(texts, arrowprops=dict(arrowstyle="-", color="black", lw=1))
 
 
-# ---------------------------------------------------------------------------
+
 # Threshold helpers
-# ---------------------------------------------------------------------------
+
 
 def classify_regulation(
     df: pd.DataFrame, y_col: str, lfc_thresh: float, fdr_thresh: float
@@ -927,9 +926,9 @@ def _draw_thresholds(ax: plt.Axes, lfc: float, fdr: float) -> None:
     ax.axhline(-np.log10(fdr), color="black", linestyle="--", alpha=0.6)
 
 
-# ---------------------------------------------------------------------------
+
 # Volcano plot
-# ---------------------------------------------------------------------------
+
 
 def plot_volcano(
     df: pd.DataFrame,
@@ -977,7 +976,7 @@ def plot_volcano(
     ax.set_ylabel(cfg.y_label)
     _draw_thresholds(ax, cfg.lfc_thresh, cfg.fdr_thresh)
     ax.legend(fontsize=8)
-    plot_title = cfg.title or cfg.outname
+    #plot_title = cfg.title or cfg.outname
     ax.set_title(plot_title)
 
     # Save base (no highlights yet)
@@ -1092,9 +1091,9 @@ def plot_highlight(
     plt.close(fig)
 
 
-# ---------------------------------------------------------------------------
+
 # MA plot
-# ---------------------------------------------------------------------------
+
 
 def _render_ma(
     df: pd.DataFrame,
@@ -1212,9 +1211,9 @@ def plot_ma(
                figsize, point_size, symmetric_ylim, out / "MA_plot_filtered")
 
 
-# ---------------------------------------------------------------------------
+
 # Replicate correlation regression
-# ---------------------------------------------------------------------------
+
 
 def replicate_regression(
     df: pd.DataFrame,
@@ -1396,9 +1395,9 @@ def replicate_regression(
             )
 
 
-# ---------------------------------------------------------------------------
+
 # Cleanup
-# ---------------------------------------------------------------------------
+
 
 def cleanup(
     output_dir: str,
@@ -1434,9 +1433,9 @@ def cleanup(
             Path(f).unlink(missing_ok=True)
 
 
-# ---------------------------------------------------------------------------
+
 # CLI entry point
-# ---------------------------------------------------------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the argument parser for the volcano CLI."""
