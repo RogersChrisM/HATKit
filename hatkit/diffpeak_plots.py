@@ -85,8 +85,7 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-
-# Configuration dataclass
+# config dataclass
 
 @dataclass
 class VolcanoConfig:
@@ -154,9 +153,7 @@ class VolcanoConfig:
     HIGHLIGHT_COLORS = ["orange", "green", "brown"]
 
 
-
 # I/O helpers
-
 
 def read_tsv(path: str, **kwargs) -> pd.DataFrame:
     """Read a tab-separated file, returning a DataFrame."""
@@ -175,15 +172,14 @@ def safe_copy(src: str, dst: str) -> None:
 
 def convert_scientific_notation(input_path: str, output_path: str) -> None:
     """
-    Rewrites input_path to output_path, expanding any scientific-notation numeric
-    fields to standard decimal notation (10 decimal places).
+    Converts scientific notation fields in file, if found, to standard notation.
 
     Params:
-        - input_path (str)  : source file path.
-        - output_path (str) : destination file path.
+        - input_path (str)  : file with or without scientific notation within numeric fields.
+        - output_path (str) : file without scientific notation.
 
     Results:
-        - output_path (file): rewritten file with expanded numeric notation.
+        - output_path (file): rewritten file with standard decimal notation.
     """
     pattern = re.compile(r"^[+-]?\d+(\.\d*)?[eE][+-]?\d+$")
     with open(input_path) as fin, open(output_path, "w") as fout:
@@ -198,9 +194,7 @@ def convert_scientific_notation(input_path: str, output_path: str) -> None:
             fout.write("\t".join(fields) + "\n")
 
 
-
-# Genome / annotation helpers
-
+# genome / annotation helpers
 
 UCSC_BASE = "https://hgdownload.soe.ucsc.edu/goldenPath"
 
@@ -377,9 +371,7 @@ def intersects_promoter(
     return False
 
 
-
-# HBG override (bedtools-based)
-
+# hbg override
 
 HBG_PROMOTERS = [
     ("chr11", 5241401, 5243401, "HBG1"),
@@ -457,11 +449,9 @@ def check_hbg_label(
         return df, "HBG1" in df.index, "HBG2" in df.index
 
 
-
 # DESeq2 input parsing
 
-
-# Standard column sets
+# standard column sets
 _PEAK_COLS = [
     "title", "chrom", "start", "end", "strand", "peakScore", "regionSize",
     "annotation", "detailed_annot", "dist2TSS", "promID", "entrezID",
@@ -682,9 +672,7 @@ def resolve_background_treat(
     return back, treat, bcols, tcols
 
 
-
-# Bedtools intersection
-
+# bedtools intersection
 
 def _check_tool(name: str) -> None:
     """Raise RuntimeError if *name* is not on PATH."""
@@ -771,9 +759,7 @@ def collect_region_highlights(
     return highlights
 
 
-
-# Labelling helpers (shared between plotVolcano and plotHighlight)
-
+# labelling helpers
 
 def _add_top_labels(
     ax: plt.Axes,
@@ -782,14 +768,13 @@ def _add_top_labels(
     n: int,
 ) -> None:
     """
-    Adds auto-adjusted text labels for the top N most significant up- and
-    down-regulated entries. Uses adjustText to minimise overlap.
+    Adds auto-adjusted text labels for the top N up- and down-regulated entries.
 
     Params:
         - ax (Axes)      : matplotlib Axes to annotate.
         - df (DataFrame) : DataFrame indexed by geneName with logFC and y_col columns.
-        - y_col (str)    : column to use for y-axis values.
-        - n (int)        : number of labels per direction (up and down).
+        - y_col (str)    : y-axis column name.
+        - n (int)        : number of labels per direction.
     """
     for direction in ("up", "down"):
         subset = df[df["logFC"] > 0] if direction == "up" else df[df["logFC"] < 0]
@@ -841,7 +826,7 @@ def _add_specific_labels(
             logger.info("%s not found in DataFrame — skipping", gene)
             continue
 
-        # --- HBG override path ---
+        # hbg override path
         if gene in ("HBG1", "HBG2") and cfg.override_hbg:
             hbg_found = hbg1_found if gene == "HBG1" else hbg2_found
             gene_in_df = df.index.isin([gene]).any()
@@ -855,7 +840,7 @@ def _add_specific_labels(
                     texts.append(ax.text(float(xi), -np.log10(float(yi)), gene, fontsize=5, fontweight="bold"))
                 continue
 
-        # --- Promoter-only path ---
+        # promoter-only path
         if cfg.label_promoter_only and not cfg.dge:
             rows_to_label = []
             if isinstance(info, pd.DataFrame):
@@ -873,7 +858,7 @@ def _add_specific_labels(
                 texts.append(ax.text(row["logFC"], -np.log10(row[y_col]), gene, fontsize=5, fontweight="bold"))
             continue
 
-        # --- Standard path ---
+        # standard path
         xs = info["logFC"] if isinstance(info, pd.Series) else info["logFC"]
         ys = info[y_col] if isinstance(info, pd.Series) else info[y_col]
 
@@ -888,9 +873,7 @@ def _add_specific_labels(
         adjust_text(texts, arrowprops=dict(arrowstyle="-", color="black", lw=1))
 
 
-
-# Threshold helpers
-
+# threshold helpers
 
 def classify_regulation(
     df: pd.DataFrame, y_col: str, lfc_thresh: float, fdr_thresh: float
@@ -926,9 +909,7 @@ def _draw_thresholds(ax: plt.Axes, lfc: float, fdr: float) -> None:
     ax.axhline(-np.log10(fdr), color="black", linestyle="--", alpha=0.6)
 
 
-
-# Volcano plot
-
+# volcano plot
 
 def plot_volcano(
     df: pd.DataFrame,
@@ -976,8 +957,7 @@ def plot_volcano(
     ax.set_ylabel(cfg.y_label)
     _draw_thresholds(ax, cfg.lfc_thresh, cfg.fdr_thresh)
     ax.legend(fontsize=8)
-    #plot_title = cfg.title or cfg.outname
-    ax.set_title(plot_title)
+    plot_title = cfg.title or cfg.outname
 
     # Save base (no highlights yet)
     fig.savefig(out / "base_volcanoPlot.pdf", format="pdf")
@@ -1059,7 +1039,6 @@ def plot_highlight(
 
     fig, ax = plt.subplots()
     _scatter_sig(ax, highlight_df, y_col, s=3, label=name, color=color)
-    ax.set_title(cfg.title or f"{cfg.outname}_highlight")
     ax.set_xlabel("logFC")
     ax.set_ylabel(cfg.y_label)
     ax.set_xlim(xl, xr)
@@ -1091,9 +1070,7 @@ def plot_highlight(
     plt.close(fig)
 
 
-
 # MA plot
-
 
 def _render_ma(
     df: pd.DataFrame,
@@ -1105,25 +1082,7 @@ def _render_ma(
     symmetric_ylim: bool,
     out_path_stem: Path,
 ) -> None:
-    """
-    Draws and saves a single MA plot. Expects a DataFrame with pre-computed
-    'A' (mean average) and 'M' (log2 fold change) columns. Called twice by
-    plot_ma() — once for the full dataset and once for the IQR-filtered subset.
-
-    Params:
-        - df (DataFrame)      : DataFrame with 'A', 'M', and padj_col columns.
-        - padj_col (str)      : column name for adjusted p-value.
-        - alpha (float)       : significance cutoff for colouring points.
-        - title (str)         : plot title.
-        - figsize (tuple)     : figure size.
-        - point_size (int)    : scatter dot size.
-        - symmetric_ylim (bool): force symmetric y-axis around 0.
-        - out_path_stem (Path): output path without extension; .pdf and .png are appended.
-
-    Results:
-        - <out_path_stem>.pdf (file): MA plot in PDF format.
-        - <out_path_stem>.png (file): MA plot in PNG format.
-    """
+    # draws and saves one MA plot. called twice by plot_ma() — full and IQR-filtered.
     plot_df = df.copy()
     plot_df["category"] = "ns"
     plot_df.loc[(plot_df[padj_col] < alpha) & (plot_df["M"] > 0), "category"] = "up"
@@ -1141,7 +1100,6 @@ def _render_ma(
         ax.set_ylim(-lim, lim)
     ax.set_xlabel("A (mean log2 tag density)")
     ax.set_ylabel("M (log2 fold change)")
-    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(str(out_path_stem) + ".pdf", format="pdf")
     fig.savefig(str(out_path_stem) + ".png", format="png")
@@ -1192,11 +1150,11 @@ def plot_ma(
     ma_df["M"] = pd.to_numeric(ma_df[logfc_col], errors="coerce")
     ma_df = ma_df.dropna(subset=["A", "M"])
 
-    # --- Full MA plot ---
+    # full MA plot
     _render_ma(ma_df, padj_col, alpha, title, figsize, point_size,
                symmetric_ylim, out / "MA_plot")
 
-    # --- IQR-filtered MA plot ---
+    # IQR-filtered MA plot
     q1 = ma_df["A"].quantile(0.25)
     q3 = ma_df["A"].quantile(0.75)
     iqr = q3 - q1
@@ -1211,9 +1169,7 @@ def plot_ma(
                figsize, point_size, symmetric_ylim, out / "MA_plot_filtered")
 
 
-
-# Replicate correlation regression
-
+# replicate correlation regression
 
 def replicate_regression(
     df: pd.DataFrame,
@@ -1295,7 +1251,7 @@ def replicate_regression(
             f"SPEARMAN CORR:\t{spearman_corr}\nSPEARMAN P-VALUE:\t{spearman_p}\n"
         )
 
-    # --- Plot helper ---
+    # plot helper
     xlabel = "Replicate 1 log10(RNA counts)" if cfg.dge else "Replicate 1 Tag Density"
     ylabel = "Replicate 2 log10(RNA counts)" if cfg.dge else "Replicate 2 Tag Density"
     if cfg.title:
@@ -1309,21 +1265,7 @@ def replicate_regression(
         title: str,
         out_stem: Path,
     ) -> None:
-        """
-        Draws and saves a single replicate correlation scatter plot with a linear
-        regression line and R²/Spearman annotations. Called for both the full and
-        IQR-filtered versions.
-
-        Params:
-            - xv_plot (Series) : x-axis replicate values.
-            - yv_plot (Series) : y-axis replicate values.
-            - title (str)      : plot title.
-            - out_stem (Path)  : output path without extension; .pdf and .png appended.
-
-        Results:
-            - <out_stem>.pdf (file): correlation plot in PDF format.
-            - <out_stem>.png (file): correlation plot in PNG format.
-        """
+        # draws and saves one replicate correlation scatter plot
         sl, ic, rv, pv, se = linregress(xv_plot, yv_plot)
         sc, _ = spearmanr(xv_plot, yv_plot)
         fig, ax = plt.subplots()
@@ -1337,7 +1279,6 @@ def replicate_regression(
         ax.text(0.01, 0.95, f"Spearman={sc:.3f}", ha="left", va="top", transform=ax.transAxes)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-        ax.set_title(title)
         fig.savefig(str(out_stem) + ".pdf", format="pdf")
         fig.savefig(str(out_stem) + ".png", format="png")
         plt.close(fig)
@@ -1395,9 +1336,7 @@ def replicate_regression(
             )
 
 
-
-# Cleanup
-
+# cleanup
 
 def cleanup(
     output_dir: str,
@@ -1433,9 +1372,7 @@ def cleanup(
             Path(f).unlink(missing_ok=True)
 
 
-
 # CLI entry point
-
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the argument parser for the volcano CLI."""
@@ -1498,7 +1435,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     logger.debug("Config: %s", cfg)
 
-    # --- Parse input ---
+    # parse input
     safe_copy(cfg.file, "temp.tsv")
     df, meta = parse_deseq2("temp.tsv", dge=cfg.dge)
     back, treat, back_cols, treat_cols = resolve_background_treat(df, meta, cfg.reverse_fc)
@@ -1507,7 +1444,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     logger.info("Background: %s | Test: %s", back, treat)
 
-    # --- Rename internal columns to original input labels ---
+    # rename internal columns to original input labels
     # Applied before any write_tsv calls (plot_volcano, plot_highlight).
     # plot_ma receives explicit col names so it is unaffected by the rename.
     _col_rename: dict[str, str] = {
@@ -1520,15 +1457,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     }
     df.rename(columns=_col_rename, inplace=True)
 
-    # --- Region intersections ---
+    # region intersections
     highlights: list[pd.DataFrame] = []
     if cfg.regions and not cfg.dge:
         highlights = collect_region_highlights(df, cfg.regions)
 
-    # --- Volcano ---
+    # volcano plot
     xl, xr, yl, yu = plot_volcano(df, cfg, highlights=highlights or None)
 
-    # --- Per-region highlight plots ---
+    # per-region highlight plots
     if highlights:
         colors = cfg.HIGHLIGHT_COLORS
         for i, (hdf, hname) in enumerate(zip(highlights, cfg.region_names)):
@@ -1536,7 +1473,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 plot_highlight(hdf, hname, colors[i % len(colors)],
                                xl, xr, yl, yu, cfg, full_df=df)
 
-    # --- MA plot ---
+    # MA plot
     # Pass renamed avgTD column names explicitly so plot_ma works after rename.
     treat_avg_col = f"{_extract_sample_label(treat)}_avgTD"
     back_avg_col  = f"{_extract_sample_label(back)}_avgTD"
@@ -1548,7 +1485,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         ma_kwargs["padj_col"] = "pVal"
     plot_ma(df, title=cfg.title or "MA Plot", **ma_kwargs)
 
-    # --- Replicate regression (both groups) ---
+    # replicate regression (both groups)
     # rep_cols use the renamed column names now in df.
     is_test = Path(cfg.file).name.startswith("test")
     if not is_test:
@@ -1557,7 +1494,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     else:
         logger.warning("Test dataframe detected — skipping replicate regression.")
 
-    # --- Cleanup ---
+    # cleanup
     cleanup(cfg.outname, has_regions=bool(highlights), keep_temp=cfg.debug)
 
     print(f"\nOutputs:    {cfg.outname}/")
@@ -1569,11 +1506,9 @@ def main(argv: Optional[list[str]] = None) -> None:
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     main()
-
-
-
 # --- Signature ---
 # Author: CM Rogers (https://github.com/RogersChrisM/)
-# Date: 2026-04-23
-# SHA256: b075b49c54db8580bea5355bb087ae49c46acfd714f873823fb48bdbc7aa008a
+# Date: 2026-04-24
+# SHA256: a9590ceab2b2c713f1c9a8d0b5af9710567d4b8c94ed7253de85485e9574d6c8
+
 
