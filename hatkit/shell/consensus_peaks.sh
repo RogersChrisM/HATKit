@@ -38,10 +38,11 @@
 # Associated Package:
 #   HATKit
 #
-# Creation Date: 2025-04-12
-#   Host:  L241568
-#   OS:    Darwin 25.4.0
-#   User:  crogers
+# Creation Date: 2025-04-12T18:05:00
+#   Host: L241568
+#   OS: Darwin 25.4.0
+#   Bash: 3.2.57(1)-release
+#   User: crogers
 # =============================================================================
 
 source "$(dirname "$0")/utils.sh"
