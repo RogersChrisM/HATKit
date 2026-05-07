@@ -1,13 +1,14 @@
 #!/bin/bash
-
-source "$(dirname "$0")/utils.sh"
-
-set -euo pipefail
+# consensus_peaks.sh -- creates high-confidence consensus peaksets between replicates using default majority-overlap filtering or a user-specified minimum overlap threshold.
 
 # Usage:
 # ./consensus_peaks.sh peak_list.txt [min_overlap]
 # peak_list.txt: single-column file listing peak files
 # min_overlap: optional, default is 2
+
+source "$(dirname "$0")/utils.sh"
+
+set -euo pipefail
 
 if ! load_dependency "bedtools"; then
         exit 1
