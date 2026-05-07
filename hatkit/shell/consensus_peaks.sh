@@ -4,21 +4,24 @@
 # Author:      Christopher M. Rogers (https://github.com/RogersChrisM/)
 # Description:
 #   Generates high-confidence consensus peaksets from per-replicate MACS2
-#   narrowPeak files. Supports ATAC-seq and occupancy (ChIP-seq/CUT&RUN)
-#   peaksets. Automatically infers data type and merge distance from input
-#   filename conventions. Requires all input files to be the same data type.
-#   Outputs union, counted, and consensus BED files.
+#   narrowPeak or BED files. Supports ATAC-seq and occupancy (ChIP-seq/CUT&RUN)
+#   peaksets. Assay type is explicitly declared in the input peak list and used
+#   to determine the appropriate merge distance. Requires all input files to be
+#   the same assay type. Outputs union, counted, and consensus BED files.
 #
 # Usage:
 #   ./consensus_peaks.sh <peak_list.txt> [min_overlap]
 #
-#   peak_list.txt : single-column file listing per-replicate narrowPeak files
+#   peak_list.txt : tab-delimited, two-column file:
+#                     col 1 — path to per-replicate .narrowPeak or .bed file
+#                     col 2 — assay type (e.g. ATAC, ATAC-seq, ChIP, ChIP-seq,
+#                             CUT&RUN, CUTNRUN, CNR)
 #   min_overlap   : optional, minimum number of files required to support a
 #                   peak (default: majority, i.e. floor(N/2) + 1)
 #
 # Input Conventions:
-#   ATAC-seq    : *.markdup.rmchrM_peaks.rmblck.narrowPeak  (merge dist: 50 bp)
-#   Occupancy   : *.markdup.uq_peaks.rmblck.narrowPeak      (merge dist: 0 bp)
+#   ATAC-seq          : merge dist 50 bp
+#   ChIP-seq, CUT&RUN : merge dist 0 bp
 #
 # Outputs:
 #   <prefix>_union_peaks.bed            : all merged peaks across replicates
@@ -31,6 +34,10 @@
 #
 #   # Occupancy consensus, explicit min_overlap
 #   ./consensus_peaks.sh bcl11a_peak_list.txt 2
+#
+# Peak List Format:
+#   rep1.markdup.rmchrM_peaks.rmblck.narrowPeak    ATAC-seq
+#   rep2.markdup.rmchrM_peaks.rmblck.narrowPeak    ATAC-seq
 #
 # Dependencies:
 #   bedtools (PATH or module system)
@@ -45,9 +52,9 @@
 #   User: crogers
 # =============================================================================
 
-source "$(dirname "$0")/utils.sh"
-
 set -euo pipefail
+
+source "$(dirname "$0")/utils.sh"
 
 if ! load_dependency "bedtools"; then
         exit 1
@@ -61,7 +68,13 @@ if [[ ! -f "$PEAK_LIST" ]]; then
 fi
 
 PREFIX=$(basename "$PEAK_LIST" | sed 's/\..*$//')
-mapfile -t PEAKS < "$PEAK_LIST"
+
+declare -a PEAKS
+declare -a ASSAYS
+while IFS=$'\t' read -r FILE ASSAY; do
+    PEAKS+=("$FILE")
+    ASSAYS+=("$ASSAY")
+done < "$PEAK_LIST"
 
 N_FILES=${#PEAKS[@]}
 if (( N_FILES == 0 )); then
@@ -75,26 +88,45 @@ if (( MIN_OVERLAP > N_FILES )); then
         exit 1
 fi
 
-FIRST_FILE=$(head -1 "$PEAK_LIST")
-if [[ "$FIRST_FILE" == *"rmchrM"* ]]; then
+NORMALIZED_ASSAY=$(echo "${ASSAYS[0],,}" | sed 's/-.*$//')
+case "$NORMALIZED_ASSAY" in
+    atac)
         MERGE_DIST=50
-        EXPECTED_PATTERN="rmchrM"
-        echo "Detected ATAC-seq peaks, using merge distance: ${MERGE_DIST} bp"
-elif [[ "$FIRST_FILE" == *".uq_"* ]]; then
+        DATA_TYPE="ATAC-seq"
+        ;;
+    chip)
         MERGE_DIST=0
-        EXPECTED_PATTERN="uq_"
-        echo "Detected Occupancy peaks, using merge distance: ${MERGE_DIST} bp"
-else
-        echo "ERROR: could not infer data type from filename '${FIRST_FILE}'."
+        DATA_TYPE="ChIP-seq"
+        ;;
+    cut\&run|cutnrun|cnr)
+        MERGE_DIST=0
+        DATA_TYPE="CUT&RUN"
+        ;;
+    *)
+        echo "ERROR: unrecognized assay type '${ASSAYS[0]}'."
+        echo "Accepted types: ATAC, ATAC-seq, ChIP, ChIP-seq, CUT&RUN, CUTNRUN, CNR"
         exit 1
-fi
-for FILE in "${PEAKS[@]}"; do
-        if [["$FILE" != *"$EXPECTED_PATTERN"* ]]; then
-                echo "ERROR: file '${FILE}' does not match the expected pattern '${EXPECTED_PATTERN}'."
-                echo "Please ensure all input files must be the same data type (ATAC or occupancy)."
-                exit 1
-        fi
+        ;;
+esac
+echo "Detected ${DATA_TYPE}, using merge distance: ${MERGE_DIST} bp"
+
+for i in "${!PEAKS[@]}"; do
+    FILE="${PEAKS[$i]}"
+    ASSAY=$(echo "${ASSAYS[$i],,}" | sed 's/-.*$//')
+
+    if [[ "$FILE" != *.narrowPeak && "$FILE" != *.bed ]]; then
+        echo "ERROR: file '${FILE}' is not a .narrowPeak or .bed file."
+        echo "Accepted formats: .narrowPeak, .bed"
+        exit 1
+    fi
+
+    if [[ "$ASSAY" != "$NORMALIZED_ASSAY" ]]; then
+        echo "ERROR: file '${FILE}' has assay type '${ASSAYS[$i]}' but expected '${ASSAYS[0]}'."
+        echo "All input files must be the same assay type."
+        exit 1
+    fi
 done
+echo "All input files confirmed as ${DATA_TYPE}."
 
 cat "${PEAKS[@]}" | sort -k1,1 -k2,2n | bedtools merge -d "$MERGE_DIST" -i - > "${PREFIX}_union_peaks.bed"
 bedtools intersect -a "${PREFIX}_union_peaks.bed" -b "${PEAKS[@]}" -c > "${PREFIX}_union_peaks_with_counts.bed"
@@ -103,8 +135,8 @@ awk -v min="$MIN_OVERLAP" '$4 >= min {print $1"\t"$2"\t"$3}' "${PREFIX}_union_pe
 echo "Done! Outputs:"
 echo " - ${PREFIX}_union_peaks.bed"
 echo " - ${PREFIX}_union_peaks_with_counts.bed"
-echo " - ${PREFIX}_consensus_peaks.bed (min_overlap=$MIN_OVERLAP)"
+echo " - ${PREFIX}_consensus_peaks.bed (assay=${DATA_TYPE}, n_files=${N_FILES}, min_overlap=${MIN_OVERLAP}, merge_dist=${MERGE_DIST}bp)"
 # --- Signature ---
 # Author: CM Rogers (https://github.com/RogersChrisM/)
 # Date: 2026-05-07
-# SHA256: e973c27d0ff751e91c34faa64f4c7a69cb5583874984abf0a165ac3a69252133
+# SHA256: 8963ff153c7e468a655ed0ef4951b014f9f043a58a7a487f21b10db997e92be0
