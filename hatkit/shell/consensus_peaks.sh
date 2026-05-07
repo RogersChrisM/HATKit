@@ -1,10 +1,48 @@
 #!/bin/bash
-# consensus_peaks.sh -- creates high-confidence consensus peaksets between replicates using default majority-overlap filtering or a user-specified minimum overlap threshold.
-
+# =============================================================================
+# Script:      consensus_peaks.sh
+# Author:      Christopher M. Rogers (https://github.com/RogersChrisM/)
+# Description:
+#   Generates high-confidence consensus peaksets from per-replicate MACS2
+#   narrowPeak files. Supports ATAC-seq and occupancy (ChIP-seq/CUT&RUN)
+#   peaksets. Automatically infers data type and merge distance from input
+#   filename conventions. Requires all input files to be the same data type.
+#   Outputs union, counted, and consensus BED files.
+#
 # Usage:
-# ./consensus_peaks.sh peak_list.txt [min_overlap]
-# peak_list.txt: single-column file listing peak files
-# min_overlap: optional, default is 2
+#   ./consensus_peaks.sh <peak_list.txt> [min_overlap]
+#
+#   peak_list.txt : single-column file listing per-replicate narrowPeak files
+#   min_overlap   : optional, minimum number of files required to support a
+#                   peak (default: majority, i.e. floor(N/2) + 1)
+#
+# Input Conventions:
+#   ATAC-seq    : *.markdup.rmchrM_peaks.rmblck.narrowPeak  (merge dist: 50 bp)
+#   Occupancy   : *.markdup.uq_peaks.rmblck.narrowPeak      (merge dist: 0 bp)
+#
+# Outputs:
+#   <prefix>_union_peaks.bed            : all merged peaks across replicates
+#   <prefix>_union_peaks_with_counts.bed: union peaks with per-file overlap counts
+#   <prefix>_consensus_peaks.bed        : high-confidence consensus peaks (BED3)
+#
+# Examples:
+#   # ATAC consensus, default majority overlap
+#   ./consensus_peaks.sh atac_peak_list.txt
+#
+#   # Occupancy consensus, explicit min_overlap
+#   ./consensus_peaks.sh bcl11a_peak_list.txt 2
+#
+# Dependencies:
+#   bedtools (PATH or module system)
+#
+# Associated Package:
+#   HATKit
+#
+# Creation Date: 2025-04-12
+#   Host:  L241568
+#   OS:    Darwin 25.4.0
+#   User:  crogers
+# =============================================================================
 
 source "$(dirname "$0")/utils.sh"
 
@@ -65,3 +103,7 @@ echo "Done! Outputs:"
 echo " - ${PREFIX}_union_peaks.bed"
 echo " - ${PREFIX}_union_peaks_with_counts.bed"
 echo " - ${PREFIX}_consensus_peaks.bed (min_overlap=$MIN_OVERLAP)"
+# --- Signature ---
+# Author: CM Rogers (https://github.com/RogersChrisM/)
+# Date: 2026-05-07
+# SHA256: e1ef7db72bc3abd0db01a10dff83d48778540cd78bfc035368e28b37f51241f2
