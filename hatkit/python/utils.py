@@ -19,3 +19,7 @@ def waitForProcess(pid, script_path="../shell/waitForProcessThenDo.sh"):
 
 if __name__ == '__main__':
     exit(1)
+# --- Signature ---
+# Author: CM Rogers (https://github.com/RogersChrisM/)
+# Date: 2026-05-07
+# SHA256: 7ef0c7a6dee8bacdffca350aabbdd67da98424ef2be31818bc34cf129350750c

@@ -107,4 +107,4 @@ echo " - ${PREFIX}_consensus_peaks.bed (min_overlap=$MIN_OVERLAP)"
 # --- Signature ---
 # Author: CM Rogers (https://github.com/RogersChrisM/)
 # Date: 2026-05-07
-# SHA256: e1ef7db72bc3abd0db01a10dff83d48778540cd78bfc035368e28b37f51241f2
+# SHA256: e973c27d0ff751e91c34faa64f4c7a69cb5583874984abf0a165ac3a69252133

@@ -20,3 +20,7 @@ load_dependency() {
         fi
         echo "${TOOL} loaded: $("$TOOL" --version 2>&1 | head -1)"
 
+# --- Signature ---
+# Author: CM Rogers (https://github.com/RogersChrisM/)
+# Date: 2026-05-07
+# SHA256: 3cc6ecfe0b237985d25d39097c7ccba659a814fd3f995dd2a347e00673a74f13
